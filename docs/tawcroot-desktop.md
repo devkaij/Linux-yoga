@@ -19,10 +19,13 @@
 
 ## 关键设计（为什么不是直接把 proot 换成 tawcroot）
 
-1. **必须用 rootfs 副本**。tawcroot 的硬链接仿真会**就地改写** rootfs 里的链接名（改成
-   `tawcroot:link:<token>` 指向 link store），如果在 proot 正在用的那份上跑，proot 会话会看到一堆断链。
-   所以：`prepare` 把 `$PREFIX/var/lib/proot-distro/containers/debian-anland/rootfs` 复制到
-   `$HOME/workstation/desktop-rootfs`（约 8.1GB），只有副本会被 tawcroot 改写；proot 那份原样保留 = 天然回退点。
+1. **硬链接改写用 DEGRADED 模式规避（默认，不复制 rootfs）**。tawcroot 的硬链接仿真会**就地改写**
+   rootfs 里的链接名（改成 `tawcroot:link:<token>` 指向 link store），在 proot 那份上跑会让 proot 看到断链。
+   读源码后找到一条不需复制 8GB 的路：`src/linkstore.c` 的 `version_gate()` 在 store 里 `version > 1`
+   时把状态置 `DEGRADED`，而 `store_lock()` 对非 `READY` 状态直接返回 `EPERM` ⇒ **所有 store 变更被拒绝、
+   文件名不再被改写**，guest 内 `link()` 退回真实 `EPERM`（Android 上本来也是 EPERM，行为反而更真）。
+   所以 `prepare shared`（默认）只做两件事：`mkdir <rootfs>/../tawcroot` 并写 `version=999`。
+   需要完整硬链接仿真（装 deb、git gc 保真）时才用 `prepare copy`（复制 8.1GB 专用副本）。
 2. **不走 `startplasma-anland`**。上游脚本容器分支大量用 `sudo`，tawcroot 的伪 root 下 sudo 不可靠；
    改为 `yoga-plasma-boot.sh` 直接复刻它的语义（环境变量、`/run/user/0`、`/tmp/.X11-unix`、
    `KWIN_USE_BUFFER_AGE=0`、`dbus-run-session -- startplasma-wayland`），跳过音频（本机 pipewire 已坏）。
@@ -38,11 +41,12 @@
 # 一次性安装启动器（不需要 adb）
 curl -fsSL https://gh-proxy.com/https://raw.githubusercontent.com/devkaij/Linux-yoga/main/termux/install-tawc-desktop.sh | bash
 
-yoga-plasma-tawc status     # 现状：rootfs 有没有、tawcroot 有没有、kwin 活着没
-yoga-plasma-tawc prepare    # 建副本 + 装 boot 脚本（8GB 复制，几分钟；只做一次）
+yoga-plasma-tawc status     # 现状：模式、store 标记、tawcroot、会话计数
+yoga-plasma-tawc prepare            # 默认 shared：写 DEGRADED 标记，不复制 rootfs
+yoga-plasma-tawc prepare copy       # 可选：复制 8.1GB 专用副本，保留完整硬链接仿真
 yoga-plasma-tawc start      # 起 anland 守护 + termux-va + tawcroot 会话
 yoga-plasma-tawc bench      # kwin jiffies/10s（关键判据）
-yoga-plasma-tawc stop       # 停会话（保留 rootfs）
+yoga-plasma-tawc stop       # 停会话
 ```
 
 前置：`$PREFIX/bin/tawcroot` 存在（`install-tawc-desktop.sh` 会检查并给编译命令）。
