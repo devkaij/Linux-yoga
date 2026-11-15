@@ -14,8 +14,28 @@ JOBS=${JOBS:-$(nproc)}
 echo "== [1/6] 准备源码目录 =="
 mkdir -p "$SRCROOT" "$OUT"
 cd "$SRCROOT"
-if [ ! -d kwin-* ]; then
-  # 需要 deb-src（Dockerfile 里已打开）
+
+# deb-src 自愈：镜像层里 /var/lib/apt/lists 被清空过，或 base image 用别的 sources 布局，
+# 这里无条件重新确认 deb-src 并 update，避免 "You must put some 'deb-src' URIs"。
+ensure_deb_src() {
+  local f
+  for f in /etc/apt/sources.list.d/debian.sources /etc/apt/sources.list; do
+    [ -f "$f" ] || continue
+    if grep -qE '^Types:[[:space:]]*deb[[:space:]]*$' "$f"; then
+      sed -i -E 's/^Types:[[:space:]]*deb[[:space:]]*$/Types: deb deb-src/' "$f"
+    fi
+  done
+  # deb822 布局没有 Types 行时，追加传统 deb-src 行兜底
+  if ! grep -rqE '^(deb-src|Types:.*deb-src)' /etc/apt/sources.list /etc/apt/sources.list.d/ 2>/dev/null; then
+    echo "deb-src http://deb.debian.org/debian trixie main contrib non-free non-free-firmware" >> /etc/apt/sources.list
+  fi
+  echo "--- active deb-src entries ---"
+  grep -rhE '^(deb-src|Types:.*deb-src)' /etc/apt/sources.list /etc/apt/sources.list.d/ 2>/dev/null || true
+}
+ensure_deb_src
+apt-get update -qq
+
+if ! ls -d kwin-* >/dev/null 2>&1; then
   apt-get source kwin
 fi
 KSRC=$(echo "$SRCROOT"/kwin-* | awk '{print $1}')
