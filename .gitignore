@@ -1,0 +1,5 @@
+src/
+build/
+out/
+ccache/
+*.zip
