@@ -1,5 +1,6 @@
-src/
-build/
+# 只忽略构建工作目录，不要用裸 'src/' —— 那会把 overlay/src/ 一起忽略掉
+/work/
+/build/
 out/
 ccache/
 *.zip

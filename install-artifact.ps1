@@ -11,7 +11,7 @@ param(
 )
 $ErrorActionPreference = 'Stop'
 
-function Invoke-Adb { param([string[]]$Args) & $Adb -s $Serial @Args }
+function Invoke-Adb { param([string[]]$CmdArgs) & $Adb -s $Serial @CmdArgs }
 
 if ($Rollback) {
   $sh = @'
