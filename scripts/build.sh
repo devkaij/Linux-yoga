@@ -41,8 +41,12 @@ fi
 KSRC=$(echo "$SRCROOT"/kwin-* | awk '{print $1}')
 echo "kwin source: $KSRC"
 
-echo "== [2/6] 应用 lfdevs anland 补丁（按 debian/patches/series 顺序）=="
+echo "== [2/6] 应用 lfdevs anland 补丁 =="
 cd "$KSRC"
+# series.ci = 只在 Debian 13 trixie 的 kwin 6.3.6 源码上验证过能干净应用的子集（10 个）；
+# 完整 series 里含 Ubuntu 专用与 upstream backport，会与本源码冲突。
+SERIES="$WORK/patches/lfdevs/series.ci"
+if [ -f "$SERIES" ]; then echo "  使用验证过的子集: series.ci"; else SERIES="$WORK/patches/lfdevs/series"; echo "  series.ci 不存在，回退完整 series"; fi
 while read -r p; do
   [ -z "$p" ] && continue
   case "$p" in \#*) continue;; esac
@@ -50,10 +54,13 @@ while read -r p; do
   [ -f "$f" ] || { echo "missing patch: $p"; exit 3; }
   if patch -p1 --forward --silent < "$f"; then
     echo "  applied: $p"
+  elif patch -p1 -R --dry-run --silent < "$f" >/dev/null 2>&1; then
+    echo "  already applied (skip): $p"
+    find . -name '*.rej' -delete 2>/dev/null || true
   else
     echo "  FAILED: $p"; exit 4
   fi
-done < "$WORK/patches/lfdevs/series"
+done < "$SERIES"
 
 echo "== [3/6] 覆盖我方改动（平板笔 + damage 门控 + TabletMode 运行时切换）=="
 if [ -d "$WORK/overlay" ]; then
