@@ -19,12 +19,18 @@ fetch() {
 }
 
 echo "== 下载启动器 =="
-fetch "$RAW/yoga-plasma-tawc.sh" "$TMP/yoga-plasma-tawc"
-fetch "$RAW/yoga-plasma-boot.sh" "$TMP/yoga-plasma-boot"
+fetch "$RAW/yoga-plasma-tawc.sh"     "$TMP/yoga-plasma-tawc"
+fetch "$RAW/yoga-plasma-boot.sh"     "$TMP/yoga-plasma-boot"
+fetch "$RAW/yoga-guest-exec.sh"      "$TMP/yoga-guest-exec"
+fetch "$RAW/yoga-engine.sh"          "$TMP/yoga-engine"
 install -m 755 "$TMP/yoga-plasma-tawc" "$PREFIX/bin/yoga-plasma-tawc"
 install -m 755 "$TMP/yoga-plasma-boot" "$PREFIX/bin/yoga-plasma-boot"
+install -m 755 "$TMP/yoga-guest-exec"  "$PREFIX/bin/yoga-guest-exec"
+install -m 755 "$TMP/yoga-engine"      "$PREFIX/bin/yoga-engine"
 echo "OK: $PREFIX/bin/yoga-plasma-tawc"
 echo "    $PREFIX/bin/yoga-plasma-boot"
+echo "    $PREFIX/bin/yoga-guest-exec   # 引擎无关的 in-guest 执行入口"
+echo "    $PREFIX/bin/yoga-engine       # 三引擎切换 show/set/switch/bench"
 
 if [ ! -x "$PREFIX/bin/tawcroot" ]; then
   echo
@@ -36,8 +42,15 @@ fi
 
 echo
 echo "下一步："
-echo "  yoga-plasma-tawc status     # 看现状"
-echo "  yoga-plasma-tawc prepare    # 一次性：建专用 rootfs 副本（约 8GB，需几分钟）"
+echo "  yoga-plasma-tawc doctor     # 体检：二进制/rootfs/DEGRADED/adb/socket 全项"
+echo "  yoga-plasma-tawc prepare    # 一次性：默认 shared(DEGRADED)，不复制 8GB"
 echo "  yoga-plasma-tawc start      # 起 tawcroot 版桌面"
-echo "  yoga-plasma-tawc bench      # 测 kwin CPU（对比 proot 版）"
-echo "proot 版会话不受影响，随时用旧的 yoga-plasma / stack-up.sh 回退。"
+echo "  yoga-engine bench           # 测 kwin CPU（proot 基线 293–303，目标 ≤150）"
+echo
+echo "切引擎（任意时刻）："
+echo "  yoga-engine show                    # 当前引擎/会话/wayland/socket/刷新率"
+echo "  yoga-engine switch tawc             # 停 → 登记 → 起（一条命令换引擎）"
+echo "  yoga-engine switch proot            # 回退到 proot（旧的 yoga-plasma/stack-up 链路）"
+echo "  yoga-engine switch proroot          # 对照 proroot（需先 yoga-plasma-proroot install）"
+echo
+echo "proot 版 rootfs 保持原样、不被 tawcroot 改写，随时可回退。"
