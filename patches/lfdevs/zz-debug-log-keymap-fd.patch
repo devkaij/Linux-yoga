@@ -1,21 +1,11 @@
-From: DSH debug build
-Subject: [PATCH] wayland/keyboard: log which keymap fd is handed to libwayland
-
-Diagnostic only. Prints the resource version, the shared keymap fd/size/validity,
-the SealWrite flag and the keymap byte size right before send_keymap() runs, so a
-single session log answers whether kwin passes a valid fd, a negative one, or the
-per-client fallback branch. Revert before shipping.
-
----
- src/wayland/keyboard.cpp | 9 +++++++++
- 1 file changed, 9 insertions(+)
-
+diff --git a/src/wayland/keyboard.cpp b/src/wayland/keyboard.cpp
+index db1e9e0..43643aa 100644
 --- a/src/wayland/keyboard.cpp
 +++ b/src/wayland/keyboard.cpp
-@@ -84,6 +84,15 @@ void KeyboardInterfacePrivate::sendKeymap(Resource *resource)
+@@ -72,6 +72,13 @@ void KeyboardInterfacePrivate::sendEnter(SurfaceInterface *surface, quint32 seri
+ 
+ void KeyboardInterfacePrivate::sendKeymap(Resource *resource)
  {
-     // From version 7 on, keymaps must be mapped privately, so that
-     // we can seal the fd and reuse it between clients.
 +    qCWarning(KWIN_CORE).nospace() << "[keymap-dbg] res=" << (void *)resource->handle
 +                                   << " v=" << resource->version()
 +                                   << " sharedFd=" << sharedKeymapFile.fd()
@@ -23,6 +13,6 @@ per-client fallback branch. Revert before shipping.
 +                                   << " sharedValid=" << sharedKeymapFile.isValid()
 +                                   << " sealWrite=" << sharedKeymapFile.effectiveFlags().testFlag(RamFile::Flag::SealWrite)
 +                                   << " keymapBytes=" << keymap.size();
+     // From version 7 on, keymaps must be mapped privately, so that
+     // we can seal the fd and reuse it between clients.
      if (resource->version() >= 7 && sharedKeymapFile.effectiveFlags().testFlag(RamFile::Flag::SealWrite)) {
-         send_keymap(resource->handle, keymap_format::keymap_format_xkb_v1, sharedKeymapFile.fd(), sharedKeymapFile.size());
-         // otherwise give each client its own unsealed copy.
