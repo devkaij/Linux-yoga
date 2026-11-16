@@ -1,18 +1,21 @@
 diff --git a/src/wayland/keyboard.cpp b/src/wayland/keyboard.cpp
-index db1e9e0..43643aa 100644
+index db1e9e0..0eeed1a 100644
 --- a/src/wayland/keyboard.cpp
 +++ b/src/wayland/keyboard.cpp
-@@ -72,6 +72,13 @@ void KeyboardInterfacePrivate::sendEnter(SurfaceInterface *surface, quint32 seri
+@@ -72,6 +72,16 @@ void KeyboardInterfacePrivate::sendEnter(SurfaceInterface *surface, quint32 seri
  
  void KeyboardInterfacePrivate::sendKeymap(Resource *resource)
  {
-+    qCWarning(KWIN_CORE).nospace() << "[keymap-dbg] res=" << (void *)resource->handle
-+                                   << " v=" << resource->version()
-+                                   << " sharedFd=" << sharedKeymapFile.fd()
-+                                   << " sharedSize=" << sharedKeymapFile.size()
-+                                   << " sharedValid=" << sharedKeymapFile.isValid()
-+                                   << " sealWrite=" << sharedKeymapFile.effectiveFlags().testFlag(RamFile::Flag::SealWrite)
-+                                   << " keymapBytes=" << keymap.size();
++    {
++        static int _kmSeq;
++        const bool _kmShared = resource->version() >= 7 && sharedKeymapFile.effectiveFlags().testFlag(RamFile::Flag::SealWrite);
++        qCWarning(KWIN_CORE).nospace() << "[keymap-dbg2] seq=" << (++_kmSeq)
++                                       << " v=" << resource->version()
++                                       << " branch=" << (_kmShared ? "shared" : "local")
++                                       << " sharedFd=" << sharedKeymapFile.fd()
++                                       << " sharedValid=" << sharedKeymapFile.isValid()
++                                       << " keymapBytes=" << keymap.size();
++    }
      // From version 7 on, keymaps must be mapped privately, so that
      // we can seal the fd and reuse it between clients.
      if (resource->version() >= 7 && sharedKeymapFile.effectiveFlags().testFlag(RamFile::Flag::SealWrite)) {
