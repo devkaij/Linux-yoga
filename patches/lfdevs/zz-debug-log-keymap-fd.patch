@@ -1,0 +1,28 @@
+From: DSH debug build
+Subject: [PATCH] wayland/keyboard: log which keymap fd is handed to libwayland
+
+Diagnostic only. Prints the resource version, the shared keymap fd/size/validity,
+the SealWrite flag and the keymap byte size right before send_keymap() runs, so a
+single session log answers whether kwin passes a valid fd, a negative one, or the
+per-client fallback branch. Revert before shipping.
+
+---
+ src/wayland/keyboard.cpp | 9 +++++++++
+ 1 file changed, 9 insertions(+)
+
+--- a/src/wayland/keyboard.cpp
++++ b/src/wayland/keyboard.cpp
+@@ -84,6 +84,15 @@ void KeyboardInterfacePrivate::sendKeymap(Resource *resource)
+ {
+     // From version 7 on, keymaps must be mapped privately, so that
+     // we can seal the fd and reuse it between clients.
++    qCWarning(KWIN_CORE).nospace() << "[keymap-dbg] res=" << (void *)resource->handle
++                                   << " v=" << resource->version()
++                                   << " sharedFd=" << sharedKeymapFile.fd()
++                                   << " sharedSize=" << sharedKeymapFile.size()
++                                   << " sharedValid=" << sharedKeymapFile.isValid()
++                                   << " sealWrite=" << sharedKeymapFile.effectiveFlags().testFlag(RamFile::Flag::SealWrite)
++                                   << " keymapBytes=" << keymap.size();
+     if (resource->version() >= 7 && sharedKeymapFile.effectiveFlags().testFlag(RamFile::Flag::SealWrite)) {
+         send_keymap(resource->handle, keymap_format::keymap_format_xkb_v1, sharedKeymapFile.fd(), sharedKeymapFile.size());
+         // otherwise give each client its own unsealed copy.
