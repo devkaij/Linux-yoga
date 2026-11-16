@@ -1,0 +1,210 @@
+# PoC: publish zwp_linux_dmabuf_v1 (and wl_drm when possible) without a DrmDevice
+#
+# Status: proof of concept, NOT meant for upstream. This patch applies on top of
+# the lfdevs series in this directory - it edits code introduced by
+# backends-anland-Add-support-for-running-without-a-DR.patch - so it must stay
+# after that one in series.ci.
+#
+# Why this is needed
+# ------------------
+# In Anland/surfaceless mode (ANLAND_NO_DRM_DEVICE=1) there is no DrmDevice, so
+# AbstractEglBackend::initWayland() cannot derive a dma-buf format table from a
+# scanout device. The lfdevs series already added an "else" branch for that case,
+# but it only does something when EglDisplay::nonExternalOnlySupportedDrmFormats()
+# is non-empty. Under surfaceless KGSL/Turnip EGL, EGL_EXT_image_dma_buf_import
+# (_modifiers) is not exposed, so that query returns nothing, the tranche list
+# stays empty, and zwp_linux_dmabuf_v1 - created lazily by
+# WaylandServer::linuxDmabuf() together with setSupportedFormatsWithModifiers() -
+# is never instantiated. Clients see no dma-buf global and stay on wl_shm.
+#
+# What this patch does
+# --------------------
+# 1. abstract_egl_backend.cpp: adds fallbackDmaBufFormats(), a static linear-only
+#    table (ARGB8888/XRGB8888/ABGR8888/XBGR8888/ABGR2101010/XRGB2101010, each with
+#    DRM_FORMAT_MOD_LINEAR).
+# 2. initWayland(), no-DRM branch: always create the
+#    LinuxDmaBufV1ClientBufferIntegration, register the render backend and call
+#    setSupportedFormatsWithModifiers() - using the fallback table when EGL
+#    reported no formats. Both calls must happen before any client binds the
+#    global, and setSupportedFormatsWithModifiers() dereferences
+#    tranches.first(), so the list is never left empty. wl_drm is still only
+#    advertised when EGL knows a render node: it hands the node path to clients,
+#    and an empty path only makes them fail open("").
+# 3. testImportBuffer(): with no DRM device and no EGL-reported formats, a
+#    fallback format with a LINEAR/INVALID modifier is still passed to a real
+#    eglCreateImageKHR import instead of being rejected up front. The result is
+#    reported honestly - if KGSL/Turnip cannot create the EGLImage the client
+#    gets zwp_linux_buffer_params_v1 failed/invalid_wl_buffer.
+#
+# Known limits
+# ------------
+# - Publishing the global plus a format list is all this PoC claims. Real buffer
+#   import depends on the EGL driver: without working EGL_EXT_image_dma_buf_import
+#   (and LINEAR modifier handling), importBufferAsImage() returns
+#   EGL_NO_IMAGE_KHR and every client buffer is rejected.
+# - Clients also need a way to allocate dma-bufs. QtWayland/QtQuick clients on
+#   this device have no /dev/dri render node, so they cannot produce a dma-buf
+#   even once the global exists. That side is out of scope here.
+# - wl_drm usually will not appear: with Anland/KGSL, EGL reports no render node.
+#   Expect zwp_linux_dmabuf_v1 only.
+# - The advertised table is not verified against the driver; it is deliberately
+#   minimal (LINEAR only) so that clients cannot be led into tiled layouts.
+#
+# Revert
+# ------
+#   git apply -R zz-poc-dmabuf-without-drmdevice.patch
+# or remove the last line of series.ci and rebuild.
+#
+# Debugging: grep the kwin log for "[dmabuf-poc]".
+#
+diff --git a/src/platformsupport/scenes/opengl/abstract_egl_backend.cpp b/src/platformsupport/scenes/opengl/abstract_egl_backend.cpp
+index e6bc3d3..1a11258 100644
+--- a/src/platformsupport/scenes/opengl/abstract_egl_backend.cpp
++++ b/src/platformsupport/scenes/opengl/abstract_egl_backend.cpp
+@@ -9,6 +9,7 @@
+ #include "platformsupport/scenes/opengl/abstract_egl_backend.h"
+ #include "compositor.h"
+ #include "core/drmdevice.h"
++#include "core/graphicsbuffer.h"
+ #include "core/outputbackend.h"
+ #include "main.h"
+ #include "opengl/egl_context_attribute_builder.h"
+@@ -94,6 +95,40 @@ void AbstractEglBackend::setEglDisplay(EglDisplay *display)
+     setSupportsBufferAge(m_display->supportsBufferAge());
+ }
+ 
++// [PoC dmabuf-poc] Format table advertised when there is no DrmDevice at all
++// and the EGL implementation does not report any importable dma-buf format.
++//
++// With Anland/KGSL surfaceless EGL, EglDisplay::queryImportFormats() comes back
++// empty (the EGL display does not expose EGL_EXT_image_dma_buf_import_modifiers),
++// so KWin has nothing to put in a tranche and never creates the
++// zwp_linux_dmabuf_v1 global. Advertising a conservative linear-only table at
++// least makes the global and a plausible format list visible to clients, which
++// is what this PoC is after.
++//
++// Only DRM_FORMAT_MOD_LINEAR is claimed: KGSL allocations are linear, and
++// advertising an implicit/tiled modifier would be a lie clients could not
++// satisfy. Importing these buffers is NOT guaranteed - see testImportBuffer().
++static const QHash<uint32_t, QList<uint64_t>> &fallbackDmaBufFormats()
++{
++    static const QHash<uint32_t, QList<uint64_t>> ret = [] {
++        const uint32_t formats[] = {
++            DRM_FORMAT_ARGB8888,
++            DRM_FORMAT_XRGB8888,
++            DRM_FORMAT_ABGR8888,
++            DRM_FORMAT_XBGR8888,
++            DRM_FORMAT_ABGR2101010,
++            DRM_FORMAT_XRGB2101010,
++        };
++
++        QHash<uint32_t, QList<uint64_t>> table;
++        for (const uint32_t format : formats) {
++            table.insert(format, {DRM_FORMAT_MOD_LINEAR});
++        }
++        return table;
++    }();
++    return ret;
++}
++
+ void AbstractEglBackend::initWayland()
+ {
+     if (!WaylandServer::self()) {
+@@ -194,18 +229,47 @@ void AbstractEglBackend::initWayland()
+         dmabuf->setSupportedFormatsWithModifiers(m_tranches);
+     }
+     else {
+-        const auto formats = m_display->nonExternalOnlySupportedDrmFormats();
+-        if (!formats.isEmpty()) {
+-            m_tranches.append({
+-                .device = m_display->renderDevNode().value_or(0),
+-                .flags = {},
+-                .formatTable = formats,
+-            });
+-
+-            LinuxDmaBufV1ClientBufferIntegration *dmabuf = waylandServer()->linuxDmabuf();
+-            dmabuf->setRenderBackend(this);
+-            dmabuf->setSupportedFormatsWithModifiers(m_tranches);
++        // [PoC dmabuf-poc] No DrmDevice: surfaceless EGL (Anland/KGSL/Turnip).
++        //
++        // The client-buffer integration and its zwp_linux_dmabuf_v1 global do
++        // not actually need a DRM device - only the scanout/tranche side does.
++        // Create them unconditionally so the global is published even when EGL
++        // reports no importable formats.
++        const bool hasDmaBufImport = m_display->hasExtension(QByteArrayLiteral("EGL_EXT_image_dma_buf_import"));
++        const bool hasDmaBufModifiers = m_display->hasExtension(QByteArrayLiteral("EGL_EXT_image_dma_buf_import_modifiers"));
++
++        QHash<uint32_t, QList<uint64_t>> formats = m_display->nonExternalOnlySupportedDrmFormats();
++        if (formats.isEmpty()) {
++            qCWarning(KWIN_OPENGL) << "[dmabuf-poc] no DRM device and no EGL-reported dma-buf formats"
++                                   << "(EGL_EXT_image_dma_buf_import:" << hasDmaBufImport
++                                   << "EGL_EXT_image_dma_buf_import_modifiers:" << hasDmaBufModifiers << ")";
++            formats = fallbackDmaBufFormats();
++            qCWarning(KWIN_OPENGL) << "[dmabuf-poc] advertising" << formats.size()
++                                   << "linear fallback formats anyway; the global will exist but importing buffers is not guaranteed";
++        } else {
++            qCWarning(KWIN_OPENGL) << "[dmabuf-poc] no DRM device, advertising" << formats.size()
++                                   << "EGL-reported dma-buf formats";
+         }
++
++        // wl_drm needs a real DRM device node to hand out in its "device" event.
++        // With Anland/KGSL there is none, and handing clients an empty path
++        // would just make them fail to open(""), so only advertise it if EGL
++        // knows a render node.
++        const QString renderNode = m_display->renderNode();
++        if (!renderNode.isEmpty()) {
++            qCWarning(KWIN_OPENGL) << "[dmabuf-poc] advertising wl_drm for render node" << renderNode;
++            waylandServer()->drm()->setDevice(renderNode);
++        }
++
++        m_tranches.append({
++            .device = m_display->renderDevNode().value_or(0),
++            .flags = {},
++            .formatTable = formats,
++        });
++
++        LinuxDmaBufV1ClientBufferIntegration *dmabuf = waylandServer()->linuxDmabuf();
++        dmabuf->setRenderBackend(this);
++        dmabuf->setSupportedFormatsWithModifiers(m_tranches);
+     }
+     waylandServer()->setRenderBackend(this);
+ }
+@@ -323,17 +387,35 @@ std::shared_ptr<GLTexture> AbstractEglBackend::importDmaBufAsTexture(const DmaBu
+ 
+ bool AbstractEglBackend::testImportBuffer(GraphicsBuffer *buffer)
+ {
++    const DmaBufAttributes *attributes = buffer->dmabufAttributes();
++    if (!attributes) {
++        return false;
++    }
++
+     const auto nonExternalOnly = m_display->nonExternalOnlySupportedDrmFormats();
+-    if (auto it = nonExternalOnly.find(buffer->dmabufAttributes()->format); it != nonExternalOnly.end() && it->contains(buffer->dmabufAttributes()->modifier)) {
++    if (auto it = nonExternalOnly.find(attributes->format); it != nonExternalOnly.end() && it->contains(attributes->modifier)) {
++        return importBufferAsImage(buffer) != EGL_NO_IMAGE_KHR;
++    }
++
++    // [PoC dmabuf-poc] No DRM device and EGL reported no importable formats, so
++    // the check above can never succeed even though initWayland() advertised the
++    // static table from fallbackDmaBufFormats(). Try the import for real instead
++    // of rejecting the buffer up front: if KGSL/Turnip cannot create an
++    // EGLImage, the client still receives an honest
++    // zwp_linux_buffer_params_v1 error rather than a bogus success.
++    if (!drmDevice() && nonExternalOnly.isEmpty()
++        && fallbackDmaBufFormats().contains(attributes->format)
++        && (attributes->modifier == DRM_FORMAT_MOD_LINEAR || attributes->modifier == DRM_FORMAT_MOD_INVALID)) {
+         return importBufferAsImage(buffer) != EGL_NO_IMAGE_KHR;
+     }
++
+     // external_only buffers aren't used as a single EGLImage, import them separately
+-    const auto info = FormatInfo::get(buffer->dmabufAttributes()->format);
++    const auto info = FormatInfo::get(attributes->format);
+     if (!info || !info->yuvConversion()) {
+         return false;
+     }
+     const auto planes = info->yuvConversion()->plane;
+-    if (buffer->dmabufAttributes()->planeCount != planes.size()) {
++    if (attributes->planeCount != planes.size()) {
+         return false;
+     }
+     for (int i = 0; i < planes.size(); i++) {

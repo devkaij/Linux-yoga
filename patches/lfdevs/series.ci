@@ -9,3 +9,4 @@ backends-anland-handle-audio-socket-read-errors.patch
 backends-anland-fix-audio-socket-lifetime-during-fallback.patch
 wayland-optimize-dma-buf-synchronization-for-Anland.patch
 zz-debug-log-keymap-fd.patch
+zz-poc-dmabuf-without-drmdevice.patch
