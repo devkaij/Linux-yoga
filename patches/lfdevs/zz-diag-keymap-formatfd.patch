@@ -1,0 +1,57 @@
+diff --git a/src/wayland/keyboard.cpp b/src/wayland/keyboard.cpp
+index db1e9e0..847b9d6 100644
+--- a/src/wayland/keyboard.cpp
++++ b/src/wayland/keyboard.cpp
+@@ -15,6 +15,8 @@
+ 
+ #include <unistd.h>
+ 
++#include <cstdio>
++
+ namespace KWin
+ {
+ KeyboardInterfacePrivate::KeyboardInterfacePrivate(SeatInterface *s)
+@@ -74,11 +76,18 @@ void KeyboardInterfacePrivate::sendKeymap(Resource *resource)
+ {
+     // From version 7 on, keymaps must be mapped privately, so that
+     // we can seal the fd and reuse it between clients.
+-    if (resource->version() >= 7 && sharedKeymapFile.effectiveFlags().testFlag(RamFile::Flag::SealWrite)) {
++    const bool diagSharedBranch = resource->version() >= 7 && sharedKeymapFile.effectiveFlags().testFlag(RamFile::Flag::SealWrite);
++    if (diagSharedBranch) {
++        std::fprintf(stderr, "[KDBG keymap] res=%p ver=%u branch=shared fd=%d valid=%d size=%llu sealFlags=0x%x keymapLen=%d\n",
++                     static_cast<void *>(resource->handle), resource->version(), sharedKeymapFile.fd(), int(sharedKeymapFile.isValid()),
++                     static_cast<unsigned long long>(sharedKeymapFile.size()), static_cast<unsigned int>(sharedKeymapFile.effectiveFlags()), keymap.size());
+         send_keymap(resource->handle, keymap_format::keymap_format_xkb_v1, sharedKeymapFile.fd(), sharedKeymapFile.size());
+         // otherwise give each client its own unsealed copy.
+     } else {
+         RamFile keymapFile("kwin-xkb-keymap", keymap.constData(), keymap.size() + 1); // Include QByteArray null-terminator.
++        std::fprintf(stderr, "[KDBG keymap] res=%p ver=%u branch=local fd=%d valid=%d size=%llu keymapLen=%d\n",
++                     static_cast<void *>(resource->handle), resource->version(), keymapFile.fd(), int(keymapFile.isValid()),
++                     static_cast<unsigned long long>(keymapFile.size()), keymap.size());
+         send_keymap(resource->handle, keymap_format::keymap_format_xkb_v1, keymapFile.fd(), keymapFile.size());
+     }
+ }
+diff --git a/src/wayland/linuxdmabufv1clientbuffer.cpp b/src/wayland/linuxdmabufv1clientbuffer.cpp
+index 0f86d12..79b0c7b 100644
+--- a/src/wayland/linuxdmabufv1clientbuffer.cpp
++++ b/src/wayland/linuxdmabufv1clientbuffer.cpp
+@@ -21,6 +21,8 @@
+ #include <fcntl.h>
+ #include <unistd.h>
+ 
++#include <cstdio>
++
+ namespace KWin
+ {
+ static const int s_version = 4;
+@@ -443,6 +445,10 @@ LinuxDmaBufV1FeedbackPrivate::LinuxDmaBufV1FeedbackPrivate(LinuxDmaBufV1ClientBu
+ 
+ void LinuxDmaBufV1FeedbackPrivate::send(Resource *resource)
+ {
++    std::fprintf(stderr, "[KDBG formattable] res=%p fd=%d valid=%d size=%llu mainDevice=%llu\n",
++                 static_cast<void *>(resource->handle), m_bufferintegration->table->file.fd(), int(m_bufferintegration->table->file.isValid()),
++                 static_cast<unsigned long long>(m_bufferintegration->table->file.size()),
++                 static_cast<unsigned long long>(m_bufferintegration->mainDevice));
+     send_format_table(resource->handle, m_bufferintegration->table->file.fd(), m_bufferintegration->table->file.size());
+     QByteArray bytes;
+     bytes.append(reinterpret_cast<const char *>(&m_bufferintegration->mainDevice), sizeof(dev_t));
